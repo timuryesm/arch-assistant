@@ -1,0 +1,12 @@
+# Dependencies — recreated by npm install, never commit these
+node_modules/
+
+# Secret keys — never commit this
+.env
+
+# Next.js build output
+.next/
+
+# OS junk
+.DS_Store
+Thumbs.db
