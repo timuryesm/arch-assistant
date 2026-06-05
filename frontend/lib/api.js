@@ -126,3 +126,69 @@ export async function sendMessage(sessionId, message) {
   // { text: "...", tag: "open_question", summary: "..." }
   return res.json();
 }
+
+// ─── generateDiagram ──────────────────────────────────────────────────────────
+//
+// Asks the backend to generate a Mermaid diagram from the current session.
+//
+// This calls the new POST /api/diagram route we just added to index.js.
+// The backend takes the full conversation history for this session,
+// makes a second Claude API call with the diagram prompt, and returns
+// raw Mermaid syntax as a string.
+//
+// Parameters:
+//   sessionId — the current session ID (same one used for sendMessage)
+//
+// Returns:
+//   A string of valid Mermaid syntax, for example:
+//
+//   "flowchart TD
+//       A(Client) --> B[API Gateway]
+//       B --> C([SQS Queue])
+//       C --> D[Worker]
+//       D --> E[(Database)]"
+//
+// The DiagramPanel component takes this string and passes it directly
+// to the Mermaid library for rendering. No parsing needed on our end.
+//
+// WHY DOES THIS FUNCTION LOOK ALMOST IDENTICAL TO sendMessage?
+// Because both are just HTTP POST requests to the backend. The pattern
+// is always the same: build the request, check for errors, return the data.
+// This repetition is intentional — each function is self-contained and
+// easy to understand in isolation. Abstracting them into one generic
+// "post to backend" function would save a few lines but make the code
+// harder to read and modify independently.
+
+export async function generateDiagram(sessionId) {
+    const res = await fetch(`${BACKEND_URL}/api/diagram`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      // We only need to send the sessionId.
+      // The backend looks up the full conversation history itself.
+      body: JSON.stringify({ sessionId }),
+    });
+  
+    if (!res.ok) {
+      // Try to extract the error message from the response body.
+      // The backend always sends { error: "..." } on failure.
+      let errorMessage = `Diagram generation failed (status ${res.status})`;
+  
+      try {
+        const errData = await res.json();
+        if (errData.error) {
+          errorMessage = errData.error;
+        }
+      } catch {
+        // Response was not JSON — use the generic message
+      }
+  
+      throw new Error(errorMessage);
+    }
+  
+    // On success the backend sends: { diagram: "flowchart TD\n    A --> B\n..." }
+    // We return just the diagram string, not the whole object.
+    const data = await res.json();
+    return data.diagram;
+  }
