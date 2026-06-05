@@ -45,6 +45,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 
 // Our own modules
 const { SYSTEM_PROMPT } = require('./systemPrompt');
+const { DIAGRAM_PROMPT } = require('./diagramPrompt');
 const {
   createSession,
   appendMessage,
@@ -327,6 +328,116 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
+// ─── Route: POST /api/diagram ────────────────────────────────────────────────
+//
+// Generates a Mermaid diagram from the current conversation history.
+//
+// This is a SECOND Claude API call — completely separate from /api/chat.
+// It uses the DIAGRAM_PROMPT instead of SYSTEM_PROMPT, which instructs
+// Claude to output only valid Mermaid syntax with no prose.
+//
+// WHY A SEPARATE ROUTE AND NOT PART OF /api/chat?
+// Because diagram generation is an on-demand action, not part of the
+// conversation flow. The user triggers it explicitly by clicking a button.
+// Mixing it into /api/chat would mean Claude tries to generate a diagram
+// AND continue the conversation at the same time — wrong behaviour.
+//
+// HOW CONTEXT WORKS HERE:
+// We send the full conversation history as the messages array, just like
+// /api/chat does. But the system prompt is DIAGRAM_PROMPT, so Claude
+// reads the conversation as source material and outputs a diagram
+// instead of continuing the discussion.
+//
+// We append one final user message: "Generate the diagram now."
+// This gives Claude a clear instruction as the last message in the
+// history — without it, Claude might not know what action to take.
+//
+// Request body: { sessionId: string }
+// Response:     { diagram: string }  ← raw Mermaid syntax
+
+app.post('/api/diagram', async (req, res) => {
+    const { sessionId } = req.body;
+  
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId is required.' });
+    }
+  
+    // Get the full conversation history for this session
+    const history = getHistory(sessionId);
+  
+    if (history.length === 0) {
+      return res.status(400).json({
+        error: 'No conversation history found. Have a design discussion first.',
+      });
+    }
+  
+    console.log(`[diagram] Generating for session ${sessionId.slice(0, 8)}…`);
+  
+    try {
+      // Build the messages array for this API call.
+      //
+      // We take the full conversation history and append one final
+      // instruction message. This tells Claude what to do with the
+      // context it just read.
+      //
+      // We do NOT use appendMessage() here because we do not want this
+      // instruction stored in the session history — it is a one-off
+      // command for diagram generation, not part of the design conversation.
+      const messagesForDiagram = [
+        ...history,
+        {
+          role: 'user',
+          content:
+            'Based on everything we have discussed, generate the Mermaid diagram now. Output only the diagram syntax — nothing else.',
+        },
+      ];
+  
+      const response = await anthropic.messages.create({
+        model: 'claude-opus-4-6',
+        max_tokens: 1024,
+  
+        // DIAGRAM_PROMPT replaces SYSTEM_PROMPT for this call.
+        // This is what changes Claude's behaviour from "architect" to
+        // "diagram converter".
+        system: DIAGRAM_PROMPT,
+  
+        messages: messagesForDiagram,
+      });
+  
+      // Extract the raw text from Claude's response
+      const rawDiagram = response.content
+        .filter(block => block.type === 'text')
+        .map(block => block.text)
+        .join('')
+        .trim();
+  
+      // Basic validation — the response must start with "flowchart"
+      // If it does not, Claude ignored our instructions and returned prose.
+      // We return an error rather than passing bad syntax to the renderer.
+      if (!rawDiagram.startsWith('flowchart')) {
+        console.error('[diagram] Claude returned invalid syntax:', rawDiagram.slice(0, 100));
+        return res.status(500).json({
+          error: 'Diagram generation failed — Claude returned unexpected output. Try again.',
+        });
+      }
+  
+      console.log(`[diagram] Generated successfully (${rawDiagram.length} chars)`);
+      res.json({ diagram: rawDiagram });
+  
+    } catch (error) {
+      console.error('[diagram] Error:', error.message);
+  
+      if (error.status === 429) {
+        return res.status(429).json({
+          error: 'Rate limited. Wait a moment and try again.',
+        });
+      }
+  
+      res.status(500).json({
+        error: 'Diagram generation failed. Check the server logs.',
+      });
+    }
+  });
 
 // ─── Route: GET /health ───────────────────────────────────────────────────────
 //
