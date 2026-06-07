@@ -31,7 +31,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { createSession, sendMessage } from '../lib/api';
+import { createSession, sendMessage, generateDiagram } from '../lib/api';
 import Message from './Message';
 
 // Suggested prompts shown when the conversation is empty.
@@ -47,7 +47,14 @@ const SUGGESTED_PROMPTS = [
 
 // ─── ChatPanel component ──────────────────────────────────────────────────────
 
-export default function ChatPanel() {
+// onDiagramGenerated — callback fired when diagram source is ready.
+//   The parent (page.jsx) passes this in. ChatPanel calls it with the
+//   raw Mermaid string. The parent stores it and renders DiagramPanel.
+//
+// hasDiagram — true when a diagram is currently showing.
+//   Used to change the button label from "Generate diagram"
+//   to "Regenerate diagram" after the first generation.
+export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
 
   // ── State declarations ──────────────────────────────────────────────────────
   //
@@ -83,6 +90,14 @@ export default function ChatPanel() {
   // Session counter — just for display in the header ("Session #1", "#2", etc.)
   const [sessionNum, setSessionNum] = useState(1);
 
+  // The raw Mermaid syntax string returned by the backend.
+  // null means no diagram has been generated yet this session.
+  // When this is not null, the parent page.jsx renders DiagramPanel.
+  const [diagramSource, setDiagramSource] = useState(null);
+
+  // True while waiting for the diagram API call to complete.
+  // Used to show a loading state on the "Generate diagram" button.
+  const [isDiagramLoading, setIsDiagramLoading] = useState(false);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   //
@@ -228,6 +243,42 @@ export default function ChatPanel() {
     }
   }
 
+  // ── handleGenerateDiagram ─────────────────────────────────────────────────
+  //
+  // Called when the user clicks "Generate diagram".
+  // Makes a second API call to the backend which calls Claude with the
+  // diagram prompt and returns raw Mermaid syntax.
+  //
+  // We store the result in diagramSource state. The parent component
+  // (page.jsx) watches this value — when it becomes non-null, it renders
+  // DiagramPanel alongside ChatPanel in a split layout.
+
+  async function handleGenerateDiagram() {
+    // Do nothing if already loading or no session exists
+    if (isDiagramLoading || !sessionId) return;
+
+    // Do nothing if there is no conversation to diagram yet
+    if (messages.length === 0) {
+      setError('Have a design discussion first, then generate the diagram.');
+      return;
+    }
+
+    setIsDiagramLoading(true);
+    setError(null);
+
+    try {
+      const source = await generateDiagram(sessionId);
+      // Pass the diagram source up to the parent via the onDiagramGenerated prop.
+      // The parent (page.jsx) stores it and renders DiagramPanel.
+      // This keeps diagram rendering logic out of ChatPanel — ChatPanel
+      // only needs to know how to REQUEST a diagram, not how to RENDER one.
+      onDiagramGenerated(source);
+    } catch (err) {
+      setError(err.message || 'Diagram generation failed. Try again.');
+    } finally {
+      setIsDiagramLoading(false);
+    }
+  }
 
   // ── handleNewSession: reset the conversation ───────────────────────────────
   //
@@ -564,12 +615,44 @@ export default function ChatPanel() {
           </button>
         </div>
 
+        {/* Bottom row: hint text on the left, generate diagram button on the right */}
         <div style={{
-          fontSize: '11px',
-          color: '#D1D5DB',
-          marginTop: '6px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginTop: '8px',
         }}>
-          This assistant asks questions before proposing solutions.
+          <div style={{
+            fontSize: '11px',
+            color: '#D1D5DB',
+          }}>
+            This assistant asks questions before proposing solutions.
+          </div>
+
+          {/* Generate diagram button — only shown once the conversation has started */}
+          {messages.length > 0 && (
+            <button
+              onClick={handleGenerateDiagram}
+              disabled={isDiagramLoading || messages.length === 0}
+              style={{
+                fontSize: '12px',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                border: '1px solid #DDD6FE',
+                backgroundColor: isDiagramLoading ? '#F5F3FF' : '#EDE9FE',
+                color: isDiagramLoading ? '#A78BFA' : '#5B21B6',
+                cursor: isDiagramLoading ? 'not-allowed' : 'pointer',
+                fontWeight: 500,
+                flexShrink: 0,
+              }}
+            >
+              {isDiagramLoading
+                ? 'Generating…'
+                : hasDiagram
+                  ? 'Regenerate diagram'
+                  : 'Generate diagram'}
+            </button>
+          )}
         </div>
       </div>
 
