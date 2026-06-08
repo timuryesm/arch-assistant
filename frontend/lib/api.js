@@ -217,3 +217,60 @@ export async function exportDesignDoc(sessionId, history = [], filename = 'desig
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 100);
 }
+
+// ─── getCritique ──────────────────────────────────────────────────────────────
+//
+// Asks the backend to generate an adversarial design critique from the
+// current conversation history.
+//
+// This follows the exact same pattern as generateDiagram and exportDesignDoc:
+//   1. Send sessionId + history to the backend
+//   2. Backend calls Claude with the critique prompt
+//   3. Backend returns a structured markdown string
+//   4. We return that string to the component
+//
+// The difference is what the component DOES with the string:
+//   generateDiagram  → passes to Mermaid for rendering as SVG
+//   exportDesignDoc  → triggers a file download
+//   getCritique      → passes to CritiquePanel for markdown rendering
+//
+// Parameters:
+//   sessionId — the current session ID
+//   history   — the full conversation history array
+//
+// Returns:
+//   A markdown string structured as:
+//   ## Design critique
+//   ### Summary
+//   ### Findings (P0/P1/P2 prioritised)
+//   ### What was not reviewed
+
+export async function getCritique(sessionId, history = []) {
+  const res = await fetch(`${BACKEND_URL}/api/critique`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ sessionId, history }),
+  });
+
+  if (!res.ok) {
+    let errorMessage = `Critique generation failed (status ${res.status})`;
+
+    try {
+      const errData = await res.json();
+      if (errData.error) {
+        errorMessage = errData.error;
+      }
+    } catch {
+      // Response was not JSON — use the generic message
+    }
+
+    throw new Error(errorMessage);
+  }
+
+  // On success the backend sends: { critique: "## Design critique\n..." }
+  // We return just the markdown string, not the whole object.
+  const data = await res.json();
+  return data.critique;
+}
