@@ -32,6 +32,11 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { createSession, sendMessage, generateDiagram, exportDesignDoc } from '../lib/api';
+import {
+  saveSession,
+  loadSession,
+  inferSessionTitle,
+} from '../lib/storage';
 import Message from './Message';
 
 // Suggested prompts shown when the conversation is empty.
@@ -115,6 +120,21 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
   // We call bottomRef.current.scrollIntoView() to scroll down to it.
   const bottomRef = useRef(null);
 
+  // rawHistory stores the conversation history in the exact format
+  // the Anthropic API expects — with the JSON tag blocks intact.
+  //
+  // WHY A REF AND NOT STATE?
+  // State triggers a re-render when it changes. Re-rendering the entire
+  // chat on every message just to update history would be wasteful —
+  // the history array is never displayed directly in the UI.
+  // A ref holds the value, updates silently, and persists across renders.
+  //
+  // WHAT IS IN HERE?
+  // Each entry is: { role: 'user'|'assistant', content: string }
+  // User entries contain the plain message text.
+  // Assistant entries contain the RAW response including the JSON tag block.
+  // Claude needs to see its own previous responses exactly as written.
+  const rawHistory = useRef([]);
 
   // ── useEffect: create session on mount ─────────────────────────────────────
   //
@@ -133,19 +153,47 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
   // It calls the backend to create a session and stores the session ID in state.
 
   useEffect(() => {
-    // We define an async function inside the effect because useEffect itself
-    // cannot be async (it would return a Promise, which React does not expect).
     async function initSession() {
       try {
+        // Check if there is a session ID stored from a previous visit.
+        // We store the active session ID in localStorage under a simple key
+        // so we can resume the last conversation on page reload.
+        const savedSessionId = localStorage.getItem('arch-assistant:active-session');
+  
+        if (savedSessionId) {
+          // Try to load the saved session data
+          const savedSession = loadSession(savedSessionId);
+  
+          if (savedSession && savedSession.messages.length > 0) {
+            // Restore the session — set all state back to what it was
+            setSessionId(savedSession.id);
+  
+            // The messages array in localStorage has the DISPLAY messages
+            // (cleanText + tag) — what the UI renders
+            setMessages(savedSession.messages);
+  
+            // The rawHistory ref holds the RAW messages (with JSON tag blocks)
+            // — what gets sent to Claude
+            rawHistory.current = savedSession.rawMessages || [];
+  
+            // Infer session number from the index (rough approximation)
+            console.log(`[session] Restored session: ${savedSessionId.slice(0, 8)}…`);
+            return; // skip creating a new session
+          }
+        }
+  
+        // No saved session — create a fresh one
         const id = await createSession();
         setSessionId(id);
+        localStorage.setItem('arch-assistant:active-session', id);
+  
       } catch (err) {
         setError(
           'Cannot connect to the backend. Make sure it is running on port 3001.'
         );
       }
     }
-
+  
     initSession();
   }, []); // empty array = run once on mount
 
@@ -202,17 +250,54 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
 
     try {
       // Send to the backend, which sends to Claude, which responds
-      const response = await sendMessage(sessionId, messageText);
+      const response = await sendMessage(sessionId, messageText, rawHistory.current);
 
-      // Add Claude's response to the message list
+      // Build the new display message for Claude's response
+      const assistantMessage = {
+        role: 'assistant',
+        content: response.text,
+        tag: response.tag,
+      };
+
+      // Update the display messages state
+      const updatedMessages = [
+        ...messages,
+        { role: 'user', content: messageText, tag: null },
+        assistantMessage,
+      ];
       setMessages(prev => [
         ...prev,
-        {
-          role: 'assistant',
-          content: response.text,
-          tag: response.tag,
-        },
+        assistantMessage,
       ]);
+
+      // Update rawHistory ref with both the user message and Claude's
+      // raw response (including JSON tag block).
+      // This is what gets sent to the backend on the next request.
+      rawHistory.current = [
+        ...rawHistory.current,
+        { role: 'user', content: messageText },
+        { role: 'assistant', content: response.rawAssistantMessage },
+      ];
+
+      // Persist the session to localStorage after every exchange.
+      // We store two things:
+      //   messages     — display messages (cleanText + tag) for the UI
+      //   rawMessages  — raw messages (with JSON tag blocks) for the API
+      if (sessionId) {
+        const allDisplayMessages = [
+          ...messages,
+          { role: 'user', content: messageText, tag: null },
+          assistantMessage,
+        ];
+
+        saveSession({
+          id: sessionId,
+          createdAt: new Date().toISOString(),
+          title: inferSessionTitle(allDisplayMessages),
+          messages: allDisplayMessages,
+          rawMessages: rawHistory.current,
+        });
+      }
 
     } catch (err) {
       // Something went wrong — show the error message
@@ -287,7 +372,7 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
         .slice(0, 40);                 // cap length
       const filename = slug ? `${slug}-design.md` : 'design-document.md';
 
-      await exportDesignDoc(sessionId, filename);
+      await exportDesignDoc(sessionId, rawHistory.current, filename);
 
       // No state update needed on success — the download is the result.
       // The user sees the browser's native save/download behaviour.
@@ -323,7 +408,7 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
     setError(null);
 
     try {
-      const source = await generateDiagram(sessionId);
+      const source = await generateDiagram(sessionId, rawHistory.current);
       // Pass the diagram source up to the parent via the onDiagramGenerated prop.
       // The parent (page.jsx) stores it and renders DiagramPanel.
       // This keeps diagram rendering logic out of ChatPanel — ChatPanel
@@ -350,6 +435,12 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
       setError(null);
       onDiagramGenerated(null); // clear the diagram when starting a new session
       setSessionNum(n => n + 1); // increment the session counter
+
+      // Reset the raw history ref for the new session
+      rawHistory.current = [];
+
+      // Update the active session pointer in localStorage
+      localStorage.setItem('arch-assistant:active-session', id);
     } catch (err) {
       setError('Could not create a new session. Is the backend running?');
     }
