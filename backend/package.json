@@ -11,9 +11,12 @@
   "description": "",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
+    "@langchain/anthropic": "^1.4.0",
+    "@langchain/core": "^1.1.48",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "langchain": "^1.4.4",
     "uuid": "^14.0.0"
   }
 }
