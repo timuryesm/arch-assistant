@@ -44,6 +44,8 @@ Export the full design session as a structured markdown document — problem sta
 ## Architecture
 
 The app is split into two independent services:
+
+```
 ┌─────────────────────────────────────────────────────────┐
 │                     Browser                             │
 │                                                         │
@@ -52,7 +54,7 @@ The app is split into two independent services:
 │   │   (Next.js)     │      │    (Mermaid.js)         │  │
 │   └────────┬────────┘      └─────────────────────────┘  │
 └────────────┼────────────────────────────────────────────┘
-│ HTTP (port 3000 → 3001)
+             │ HTTP (port 3000 → 3001)
 ┌────────────▼────────────────────────────────────────────┐
 │                  Express backend                        │
 │                                                         │
@@ -61,7 +63,7 @@ The app is split into two independent services:
 │   POST /api/export      → markdown export               │
 │   POST /api/session/new → session creation              │
 └────────────┬────────────────────────────────────────────┘
-│
+             │
 ┌────────────▼────────────────────────────────────────────┐
 │               Anthropic Claude API                      │
 │                                                         │
@@ -69,6 +71,7 @@ The app is split into two independent services:
 │   System prompt 2: Diagram converter (Mermaid output)   │
 │   System prompt 3: Technical writer (markdown export)   │
 └─────────────────────────────────────────────────────────┘
+```
 
 **Three Claude API calls. Three system prompts. Three completely different behaviours from the same model.**
 
@@ -77,6 +80,8 @@ The key insight: specialisation. A model told to reason, diagram, AND document s
 ---
 
 ## Project structure
+
+```
 arch-assistant/
 ├── backend/
 │   ├── index.js            Express server + all API routes
@@ -98,6 +103,8 @@ arch-assistant/
 │   │   └── api.js          All fetch calls to the backend
 │   └── package.json
 └── README.md
+```
+
 ---
 
 ## Getting started
@@ -133,9 +140,25 @@ node index.js
 ```
 
 You should see:
-▲ Next.js 14
+```
+Backend running on http://localhost:3001
+```
 
-Local: http://localhost:3000
+### 3. Set up the frontend
+
+Open a second terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+You should see:
+```
+▲ Next.js 14
+- Local: http://localhost:3000
+```
 
 ### 4. Open the app
 
