@@ -73,25 +73,29 @@ export async function createSession() {
 
 // ─── sendMessage ──────────────────────────────────────────────────────────────
 //
-// Sends a user message to the backend and returns Claude's response.
+// Sends a user message to the backend along with the full conversation
+// history. The backend uses the history to give Claude context, then
+// returns Claude's response.
+//
+// WHAT CHANGED IN PHASE 3 PART 2:
+// We now accept a `history` parameter and send it with the request.
+// The backend no longer looks up history from its own store — it uses
+// exactly what we send here.
 //
 // Parameters:
-//   sessionId — the current session ID (from createSession)
-//   message   — the text the user typed
+//   sessionId — the current session ID
+//   message   — the user's message text
+//   history   — the full conversation history array so far
+//               Each item: { role: 'user'|'assistant', content: string }
 //
-// Returns an object with three fields:
-//   text    — Claude's response with the JSON tag block stripped out
-//   tag     — the semantic tag, e.g. "open_question" or "tradeoff"
-//   summary — one-sentence summary of Claude's response
-//
-// Example return value:
-// {
-//   text: "Before I propose anything, I need to understand the scale...",
-//   tag: "open_question",
-//   summary: "Asking about expected traffic volume before proposing architecture"
-// }
+// Returns:
+//   { text, tag, summary, rawAssistantMessage }
+//   text                — Claude's response with tag block stripped (for display)
+//   tag                 — semantic tag e.g. "open_question"
+//   summary             — one-sentence summary
+//   rawAssistantMessage — full response with tag block intact (for storage)
 
-export async function sendMessage(sessionId, message) {
+export async function sendMessage(sessionId, message, history = []) {
   const res = await fetch(`${BACKEND_URL}/api/chat`, {
     method: 'POST',
     headers: {
@@ -100,7 +104,7 @@ export async function sendMessage(sessionId, message) {
     // JSON.stringify() converts a JavaScript object into a JSON string.
     // The backend's express.json() middleware converts it back into an object.
     // This is how data travels over HTTP — as a string, not as an object.
-    body: JSON.stringify({ sessionId, message }),
+    body: JSON.stringify({ sessionId, message, history }),
   });
 
   if (!res.ok) {
@@ -129,117 +133,28 @@ export async function sendMessage(sessionId, message) {
 
 // ─── generateDiagram ──────────────────────────────────────────────────────────
 //
-// Asks the backend to generate a Mermaid diagram from the current session.
-//
-// This calls the new POST /api/diagram route we just added to index.js.
-// The backend takes the full conversation history for this session,
-// makes a second Claude API call with the diagram prompt, and returns
-// raw Mermaid syntax as a string.
+// Asks the backend to generate a Mermaid diagram from the conversation.
+// Now sends history directly instead of relying on server-side session lookup.
 //
 // Parameters:
-//   sessionId — the current session ID (same one used for sendMessage)
+//   sessionId — the current session ID
+//   history   — the full conversation history array
 //
-// Returns:
-//   A string of valid Mermaid syntax, for example:
-//
-//   "flowchart TD
-//       A(Client) --> B[API Gateway]
-//       B --> C([SQS Queue])
-//       C --> D[Worker]
-//       D --> E[(Database)]"
-//
-// The DiagramPanel component takes this string and passes it directly
-// to the Mermaid library for rendering. No parsing needed on our end.
-//
-// WHY DOES THIS FUNCTION LOOK ALMOST IDENTICAL TO sendMessage?
-// Because both are just HTTP POST requests to the backend. The pattern
-// is always the same: build the request, check for errors, return the data.
-// This repetition is intentional — each function is self-contained and
-// easy to understand in isolation. Abstracting them into one generic
-// "post to backend" function would save a few lines but make the code
-// harder to read and modify independently.
+// Returns: a string of valid Mermaid syntax
 
-export async function generateDiagram(sessionId) {
-    const res = await fetch(`${BACKEND_URL}/api/diagram`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      // We only need to send the sessionId.
-      // The backend looks up the full conversation history itself.
-      body: JSON.stringify({ sessionId }),
-    });
-  
-    if (!res.ok) {
-      // Try to extract the error message from the response body.
-      // The backend always sends { error: "..." } on failure.
-      let errorMessage = `Diagram generation failed (status ${res.status})`;
-  
-      try {
-        const errData = await res.json();
-        if (errData.error) {
-          errorMessage = errData.error;
-        }
-      } catch {
-        // Response was not JSON — use the generic message
-      }
-  
-      throw new Error(errorMessage);
-    }
-  
-    // On success the backend sends: { diagram: "flowchart TD\n    A --> B\n..." }
-    // We return just the diagram string, not the whole object.
-    const data = await res.json();
-    return data.diagram;
-  }
-
-// ─── exportDesignDoc ──────────────────────────────────────────────────────────
-//
-// Asks the backend to generate a markdown design document from the session,
-// then triggers a file download in the browser.
-//
-// This function does two distinct things:
-//   1. Fetches the markdown string from the backend (network call)
-//   2. Triggers a .md file download in the browser (DOM manipulation)
-//
-// WHY DOES THE DOWNLOAD HAPPEN HERE AND NOT IN THE COMPONENT?
-// We could return the markdown string to ChatPanel and let the component
-// handle the download. But the download logic is tightly coupled to this
-// API call — it always happens immediately after a successful fetch.
-// Keeping both steps together makes ChatPanel simpler: it just calls
-// exportDesignDoc() and nothing else needs to happen on its end.
-//
-// HOW BROWSER FILE DOWNLOADS WORK:
-// There is no download() function in JavaScript. The browser only triggers
-// a file save when the user clicks a link with a `download` attribute.
-// We fake this by:
-//   1. Creating a Blob — a chunk of in-memory binary data
-//   2. Generating a temporary URL pointing to that Blob
-//   3. Creating an invisible <a> element with that URL and a download attribute
-//   4. Programmatically clicking it — the browser intercepts and saves the file
-//   5. Immediately revoking the URL to free the memory
-//
-// This pattern is the standard way to trigger file downloads from JavaScript.
-// You will see it in virtually every web app that exports files.
-//
-// Parameters:
-//   sessionId  — the current session ID
-//   filename   — what to name the downloaded file (default: design-document.md)
-//
-// Returns: nothing — the side effect IS the download
-
-export async function exportDesignDoc(sessionId, filename = 'design-document.md') {
-  const res = await fetch(`${BACKEND_URL}/api/export`, {
+export async function generateDiagram(sessionId, history = []) {
+  const res = await fetch(`${BACKEND_URL}/api/diagram`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ sessionId }),
+    // Send history alongside sessionId so the backend can use it
+    // without looking anything up from its own store
+    body: JSON.stringify({ sessionId, history }),
   });
 
   if (!res.ok) {
-    let errorMessage = `Export failed (status ${res.status})`;
-
+    let errorMessage = `Diagram generation failed (status ${res.status})`;
     try {
       const errData = await res.json();
       if (errData.error) {
@@ -248,44 +163,57 @@ export async function exportDesignDoc(sessionId, filename = 'design-document.md'
     } catch {
       // Response was not JSON — use the generic message
     }
-
     throw new Error(errorMessage);
   }
 
-  // Extract the markdown string from the response
+  const data = await res.json();
+  return data.diagram;
+}
+
+// ─── exportDesignDoc ──────────────────────────────────────────────────────────
+//
+// Asks the backend to generate a markdown design document, then triggers
+// a file download in the browser.
+// Now sends history directly instead of relying on server-side session lookup.
+//
+// Parameters:
+//   sessionId  — the current session ID
+//   history    — the full conversation history array
+//   filename   — what to name the downloaded file
+
+export async function exportDesignDoc(sessionId, history = [], filename = 'design-document.md') {
+  const res = await fetch(`${BACKEND_URL}/api/export`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ sessionId, history }),
+  });
+
+  if (!res.ok) {
+    let errorMessage = `Export failed (status ${res.status})`;
+    try {
+      const errData = await res.json();
+      if (errData.error) {
+        errorMessage = errData.error;
+      }
+    } catch {
+      // Response was not JSON — use the generic message
+    }
+    throw new Error(errorMessage);
+  }
+
   const data = await res.json();
   const markdown = data.markdown;
 
   // ── Trigger the file download ─────────────────────────────────────────────
-
-  // Step 1: Create a Blob from the markdown string.
-  // A Blob is a file-like object of raw data that exists in memory.
-  // The type 'text/markdown' tells the OS what kind of file this is —
-  // some systems use this to open it with the right application.
   const blob = new Blob([markdown], { type: 'text/markdown' });
-
-  // Step 2: Generate a temporary URL pointing to the Blob.
-  // URL.createObjectURL() creates a URL like:
-  //   blob:http://localhost:3000/550e8400-e29b-41d4-a716-446655440000
-  // This URL only exists in this browser tab — it is not a real web URL.
   const url = URL.createObjectURL(blob);
-
-  // Step 3: Create an invisible <a> element and set it up for download.
-  // The `download` attribute tells the browser to save the file instead
-  // of navigating to it. The value becomes the suggested filename.
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
-
-  // Step 4: The <a> element must be in the DOM to be clickable in some browsers.
-  // We append it, click it, then immediately remove it — the user never sees it.
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-
-  // Step 5: Revoke the object URL to free the memory.
-  // If we skip this, the Blob stays in memory until the page is closed.
-  // For a small markdown file this is negligible, but it is good practice.
-  // We use setTimeout to ensure the click has fully processed before cleanup.
   setTimeout(() => URL.revokeObjectURL(url), 100);
 }
