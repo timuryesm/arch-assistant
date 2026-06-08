@@ -47,6 +47,7 @@ Click "Critique design" at any point in a session to get a structured adversaria
 | AI | Anthropic Claude API | Three specialised prompts for reasoning, diagrams, and export |
 | Diagrams | Mermaid.js | Text-to-diagram, works natively in Notion/GitHub |
 | Persistence | Browser localStorage | Sessions survive restarts with no backend database needed |
+| AI orchestration | LangChain | Chain composition, prompt templates, model abstraction |
 | Markdown | react-markdown | Renders Claude's formatted responses in the chat UI |
 | Styling | Inline styles | No build step, easy to read and modify |
 
@@ -104,6 +105,7 @@ arch-assistant/
 │   ├── exportPrompt.js     Technical writer — produces markdown design docs
 │   ├── critiquePrompt.js   Adversarial reviewer — finds P0/P1/P2 weaknesses
 │   ├── session.js          Session ID generation (stateless — no history storage)
+│   ├── llm.js              LangChain chains and model setup for all four AI features
 │   └── package.json
 ├── frontend/
 │   ├── app/
@@ -233,7 +235,7 @@ Mermaid.js predates React. The `DiagramPanel` component uses `useEffect` to call
 - [x] Phase 2 — Mermaid diagram generation + split panel layout
 - [x] Phase 3 — Markdown export + session persistence + conversation history
 - [x] Phase 4 Part 1 — Adversarial design critique with P0/P1/P2 severity ratings
-- [ ] Phase 4 Part 2 — LangChain refactor
+- [x] Phase 4 Part 2 — LangChain refactor (chains, prompt templates, model abstraction)
 - [ ] Phase 5 — Internal design guideline search (RAG)
 
 ---
