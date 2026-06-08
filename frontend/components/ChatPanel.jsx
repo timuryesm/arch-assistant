@@ -31,7 +31,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { createSession, sendMessage, generateDiagram, exportDesignDoc } from '../lib/api';
+import { createSession, sendMessage, generateDiagram, exportDesignDoc, getCritique } from '../lib/api';
 import {
   saveSession,
   loadSession,
@@ -64,11 +64,15 @@ export default function ChatPanel({
   onDiagramGenerated,
   hasDiagram,
 
-  // Session orchestration — new in Phase 3 Part 3
-  sessionToLoad,      // a session object to load, set by page.jsx when user clicks sidebar
-  onSessionLoaded,    // call this after loading sessionToLoad, so page.jsx clears it
-  onActiveSessionChange, // call this whenever the active session ID changes
-  onSessionSaved,     // call this after saving to localStorage, triggers sidebar refresh
+  // Critique panel callbacks — new in Phase 4
+  onCritiqueGenerated,
+  hasCritique,
+
+  // Session orchestration
+  sessionToLoad,
+  onSessionLoaded,
+  onActiveSessionChange,
+  onSessionSaved,
 }) {
 
   // ── State declarations ──────────────────────────────────────────────────────
@@ -117,6 +121,10 @@ export default function ChatPanel({
   // True while waiting for the export API call to complete.
   // Used to show a loading state on the "Export design doc" button.
   const [isExportLoading, setIsExportLoading] = useState(false);
+
+  const [isCritiqueLoading, setIsCritiqueLoading] = useState(false);
+
+  const [cachedCritique, setCachedCritique] = useState(null);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   //
@@ -274,6 +282,7 @@ export default function ChatPanel({
         rawHistory.current = sessionToLoad.rawMessages || [];
         setInput('');
         setError(null);
+        setCachedCritique(null); // clear cache when switching sessions
         localStorage.setItem('arch-assistant:active-session', sessionToLoad.id);
       }
 
@@ -465,6 +474,49 @@ export default function ChatPanel({
     }
   }
 
+  // ── handleCritique ────────────────────────────────────────────────────────────
+  //
+  // Called when the user clicks "Critique design" or "Re-critique design".
+  //
+  // CACHING BEHAVIOUR:
+  // If a critique already exists for this session AND the user has not
+  // explicitly asked to regenerate, we return the cached result instantly
+  // without making an API call. This avoids a 5-10 second wait when
+  // switching between the diagram and critique panels.
+  //
+  // The `force` parameter is true when the user clicks "Re-critique design"
+  // — meaning they explicitly want a fresh critique after the design has
+  // evolved further. In that case we ignore the cache and call the API.
+  //
+  // WHY CACHE HERE AND NOT IN page.jsx?
+  // The cache is tied to the conversation — if the user starts a new session,
+  // the cache should clear. ChatPanel already owns session lifecycle, so it
+  // is the right place to hold session-scoped cached values.
+
+  async function handleCritique(force = false) {
+    if (isCritiqueLoading || !sessionId || messages.length === 0) return;
+
+    // If we have a cached critique and this is not a forced regeneration,
+    // just show the cached result immediately — no API call needed.
+    if (cachedCritique && !force) {
+      onCritiqueGenerated?.(cachedCritique);
+      return;
+    }
+
+    setIsCritiqueLoading(true);
+    setError(null);
+
+    try {
+      const source = await getCritique(sessionId, rawHistory.current);
+      setCachedCritique(source);
+      onCritiqueGenerated?.(source);
+    } catch (err) {
+      setError(err.message || 'Critique generation failed. Try again.');
+    } finally {
+      setIsCritiqueLoading(false);
+    }
+  }
+
   // ── handleGenerateDiagram ─────────────────────────────────────────────────
   //
   // Called when the user clicks "Generate diagram".
@@ -520,7 +572,7 @@ export default function ChatPanel({
 
       // Reset the raw history ref for the new session
       rawHistory.current = [];
-
+      setCachedCritique(null);
       // Update the active session pointer in localStorage
       localStorage.setItem('arch-assistant:active-session', id);
     } catch (err) {
@@ -884,6 +936,29 @@ export default function ChatPanel({
                 }}
               >
                 {isExportLoading ? 'Exporting…' : 'Export design doc'}
+              </button>
+
+              {/* Critique design button */}
+              <button
+                onClick={() => handleCritique(hasCritique)}
+                disabled={isCritiqueLoading}
+                style={{
+                  fontSize: '12px',
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid #FECACA',
+                  backgroundColor: isCritiqueLoading ? '#FEF2F2' : '#FEE2E2',
+                  color: isCritiqueLoading ? '#FCA5A5' : '#991B1B',
+                  cursor: isCritiqueLoading ? 'not-allowed' : 'pointer',
+                  fontWeight: 500,
+                  flexShrink: 0,
+                }}
+              >
+                {isCritiqueLoading
+                  ? 'Critiquing…'
+                  : hasCritique
+                    ? 'Re-critique design'
+                    : 'Critique design'}
               </button>
 
               {/* Generate diagram button */}
