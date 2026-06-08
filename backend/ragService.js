@@ -30,7 +30,6 @@
 // Sweet spot: 500-800 characters with some overlap between chunks so
 //   ideas that span a boundary are not lost.
 
-const pdfParse = require('pdf-parse');
 const { addChunks, retrieve, clearStore, getStoreInfo } = require('./vectorStore');
 
 
@@ -62,16 +61,11 @@ const MIN_CHUNK_SIZE = 100;
 //            (provided by multer when a file is uploaded)
 
 async function extractTextFromPDF(buffer) {
-  const data = await pdfParse(buffer);
-
-  // data.text contains the full extracted text.
-  // PDF extraction is imperfect — it often includes:
-  //   - Extra whitespace and blank lines
-  //   - Page headers and footers repeated on every page
-  //   - Hyphenated words split across lines
-  // We do basic cleaning here; deeper cleaning is done in splitIntoChunks.
-  return data.text;
-}
+    const { PDFParse } = require('pdf-parse');
+    const parser = new PDFParse({ data: buffer });
+    const data = await parser.getText();
+    return data.text;
+  }
 
 
 // ── cleanText ─────────────────────────────────────────────────────────────────
@@ -240,15 +234,11 @@ async function processPDF(buffer, filename) {
 // chunks are found above the similarity threshold.
 
 async function getRelevantContext(userMessage, topK = 3) {
-  // Retrieve the most similar chunks
-  const results = await retrieve(userMessage, topK);
-
-  // Filter out low-similarity results — chunks below 0.5 similarity
-  // are probably not relevant to the current message.
-  // 0.5 is a reasonable threshold for voyage-3 embeddings.
-  const relevant = results.filter(r => r.similarity >= 0.5);
-
-  if (relevant.length === 0) return '';
+    const results = await retrieve(userMessage, topK);
+  
+    const relevant = results.filter(r => r.similarity >= 0.25);
+  
+    if (relevant.length === 0) return '';
 
   // Format the chunks as a context block
   const contextLines = relevant.map(r =>

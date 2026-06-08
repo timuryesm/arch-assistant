@@ -40,11 +40,6 @@
 // Swapping this out for a real vector DB is one function replacement.
 
 require('dotenv').config();
-const Anthropic = require('@anthropic-ai/sdk');
-
-// We use the Anthropic SDK directly for embeddings —
-// LangChain's embedding support for Voyage is less stable.
-const anthropic = new Anthropic();
 
 // The in-memory store.
 // Each entry: { text: string, embedding: number[], source: string }
@@ -66,15 +61,28 @@ const EMBEDDING_MODEL = 'voyage-3';
 // user message when retrieving relevant context.
 
 async function embedText(text) {
-  const response = await anthropic.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: text,
-  });
-
-  // The API returns an array of embedding objects.
-  // We only embed one text at a time, so we take the first result.
-  return response.data[0].embedding;
-}
+    // The Voyage embedding API is separate from the Anthropic messages API.
+    // We call it directly via fetch using the same ANTHROPIC_API_KEY.
+    const response = await fetch('https://api.voyageai.com/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.VOYAGE_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: EMBEDDING_MODEL,
+        input: text,
+      }),
+    });
+  
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Voyage embedding API error: ${response.status} — ${error}`);
+    }
+  
+    const data = await response.json();
+    return data.data[0].embedding;
+  }
 
 
 // ── cosineSimilarity ──────────────────────────────────────────────────────────
