@@ -24,8 +24,14 @@ Every AI response is tagged with what kind of design move it made:
 **Live architecture diagrams**
 At any point in the conversation, click "Generate diagram" to produce a Mermaid flowchart of the architecture discussed so far. The diagram renders live in a split panel alongside the chat.
 
-**Markdown export** *(Phase 3)*
+**Markdown export**
 Export the full design session as a structured markdown document — problem statement, architecture decisions, tradeoffs, open questions, and failure modes. Ready to paste into Notion, GitHub, or Confluence.
+
+**Conversation history sidebar**
+Every design session is saved locally in the browser. A left sidebar lists all past sessions by title and date. Click any entry to restore the full conversation instantly.
+
+**Session persistence**
+Sessions survive page refreshes, tab closes, and server restarts. History is stored in the browser's localStorage — no account or login required.
 
 ---
 
@@ -213,7 +219,7 @@ Mermaid.js predates React. The `DiagramPanel` component uses `useEffect` to call
 
 - [x] Phase 1 — Focused chat with semantic tagging
 - [x] Phase 2 — Mermaid diagram generation + split panel layout
-- [ ] Phase 3 — Markdown export + session persistence + conversation history
+- [x] Phase 3 — Markdown export + session persistence + conversation history
 - [ ] Phase 4 — LangChain multi-turn decision sessions
 - [ ] Phase 5 — Internal design guideline search (RAG)
 
