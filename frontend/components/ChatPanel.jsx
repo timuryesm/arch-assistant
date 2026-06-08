@@ -59,7 +59,17 @@ const SUGGESTED_PROMPTS = [
 // hasDiagram — true when a diagram is currently showing.
 //   Used to change the button label from "Generate diagram"
 //   to "Regenerate diagram" after the first generation.
-export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
+export default function ChatPanel({
+  // Diagram panel callbacks
+  onDiagramGenerated,
+  hasDiagram,
+
+  // Session orchestration — new in Phase 3 Part 3
+  sessionToLoad,      // a session object to load, set by page.jsx when user clicks sidebar
+  onSessionLoaded,    // call this after loading sessionToLoad, so page.jsx clears it
+  onActiveSessionChange, // call this whenever the active session ID changes
+  onSessionSaved,     // call this after saving to localStorage, triggers sidebar refresh
+}) {
 
   // ── State declarations ──────────────────────────────────────────────────────
   //
@@ -167,6 +177,7 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
           if (savedSession && savedSession.messages.length > 0) {
             // Restore the session — set all state back to what it was
             setSessionId(savedSession.id);
+            onActiveSessionChange?.(savedSession.id);
   
             // The messages array in localStorage has the DISPLAY messages
             // (cleanText + tag) — what the UI renders
@@ -186,6 +197,7 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
         const id = await createSession();
         setSessionId(id);
         localStorage.setItem('arch-assistant:active-session', id);
+        onActiveSessionChange?.(id);
   
       } catch (err) {
         setError(
@@ -211,6 +223,72 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]); // run whenever messages or loading state changes
+
+  // ── useEffect: load session when sessionToLoad changes ──────────────────
+  //
+  // page.jsx sets sessionToLoad when the user clicks a session in the sidebar.
+  // This effect watches for that change and loads the session into local state.
+  //
+  // TWO CASES:
+  //
+  // Case 1: sessionToLoad.id is null
+  //   The active session was deleted. We create a brand new session.
+  //
+  // Case 2: sessionToLoad.id is a real UUID
+  //   The user clicked an existing session. We restore its messages and
+  //   raw history, then tell page.jsx we are done (onSessionLoaded).
+  //
+  // WHY useEffect AND NOT DIRECT STATE UPDATES IN THE CALLBACK?
+  // The sidebar callback fires in page.jsx, which sets sessionToLoad state.
+  // That causes page.jsx to re-render, passing the new sessionToLoad prop
+  // down to ChatPanel. ChatPanel's useEffect fires in response to the
+  // prop change — this is the correct React pattern for reacting to
+  // prop changes. Trying to call setMessages directly from a parent
+  // callback would bypass React's render cycle.
+
+  useEffect(() => {
+    // sessionToLoad is null by default — only act when it has a value
+    if (!sessionToLoad) return;
+
+    async function loadRequestedSession() {
+      if (sessionToLoad.id === null) {
+        // Case 1: active session was deleted — start fresh
+        try {
+          const id = await createSession();
+          setSessionId(id);
+          onActiveSessionChange?.(id);
+          setMessages([]);
+          setInput('');
+          setError(null);
+          setDiagramSource?.(null);
+          rawHistory.current = [];
+          localStorage.setItem('arch-assistant:active-session', id);
+        } catch (err) {
+          setError('Could not create a new session. Is the backend running?');
+        }
+      } else {
+        // Case 2: load an existing session from the sidebar
+        setSessionId(sessionToLoad.id);
+        onActiveSessionChange?.(sessionToLoad.id);
+        setMessages(sessionToLoad.messages || []);
+        rawHistory.current = sessionToLoad.rawMessages || [];
+        setInput('');
+        setError(null);
+        localStorage.setItem('arch-assistant:active-session', sessionToLoad.id);
+      }
+
+      // Tell page.jsx we handled the load — it will clear sessionToLoad
+      // so this effect does not fire again for the same session
+      onSessionLoaded?.();
+    }
+
+    loadRequestedSession();
+
+  // We only want this effect to fire when sessionToLoad changes —
+  // not on every render. The other values (onSessionLoaded, etc.) are
+  // stable callback references that do not change between renders.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionToLoad]);
 
 
   // ── handleSend: the core function ──────────────────────────────────────────
@@ -297,6 +375,9 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
           messages: allDisplayMessages,
           rawMessages: rawHistory.current,
         });
+
+        // Tell page.jsx a session was saved so it can refresh the sidebar
+        onSessionSaved?.();
       }
 
     } catch (err) {
@@ -430,6 +511,7 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
     try {
       const id = await createSession();
       setSessionId(id);
+      onActiveSessionChange?.(id);
       setMessages([]);
       setInput('');
       setError(null);
