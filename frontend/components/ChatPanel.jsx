@@ -31,7 +31,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { createSession, sendMessage, generateDiagram, exportDesignDoc, getCritique } from '../lib/api';
+import { createSession, sendMessage, generateDiagram, exportDesignDoc, getCritique, uploadGuidelines, getGuidelinesInfo } from '../lib/api';
 import {
   saveSession,
   loadSession,
@@ -126,6 +126,13 @@ export default function ChatPanel({
 
   const [cachedCritique, setCachedCritique] = useState(null);
 
+  // Guidelines (RAG) state
+  const [guidelines, setGuidelines] = useState(null);
+  // guidelines is null when nothing is loaded, or:
+  // { source: "filename.pdf", chunkCount: 24 } when loaded
+
+  const [isUploading, setIsUploading] = useState(false);
+
   // ── Refs ────────────────────────────────────────────────────────────────────
   //
   // useRef creates a mutable value that persists across renders but does NOT
@@ -173,6 +180,16 @@ export default function ChatPanel({
   useEffect(() => {
     async function initSession() {
       try {
+        // Check if guidelines are already loaded in the backend
+        // (they persist in memory as long as the server is running)
+        try {
+          const info = await getGuidelinesInfo();
+          if (info.loaded) {
+            setGuidelines({ source: info.source, chunkCount: info.chunkCount });
+          }
+        } catch {
+          // Guidelines check failing should not block session init
+        }
         // Check if there is a session ID stored from a previous visit.
         // We store the active session ID in localStorage under a simple key
         // so we can resume the last conversation on page reload.
@@ -474,6 +491,46 @@ export default function ChatPanel({
     }
   }
 
+  // ── handleUpload ──────────────────────────────────────────────────────────────
+  //
+  // Called when the user selects a PDF file via the file input.
+  // Uploads the file to the backend which processes it into the vector store.
+  // After this, every message sent will automatically include relevant
+  // chunks from the guidelines as context.
+
+  async function handleUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type client-side before sending
+    if (file.type !== 'application/pdf') {
+      setError('Only PDF files are accepted.');
+      return;
+    }
+
+    // Validate file size client-side (10MB limit)
+    if (file.size > 10 * 1024 * 1024) {
+      setError('File too large. Maximum size is 10MB.');
+      return;
+    }
+
+    setIsUploading(true);
+    setError(null);
+
+    try {
+      const result = await uploadGuidelines(file);
+      setGuidelines({ source: result.source, chunkCount: result.chunkCount });
+
+      // Reset the file input so the same file can be re-uploaded if needed
+      e.target.value = '';
+
+    } catch (err) {
+      setError(err.message || 'Upload failed. Try again.');
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
   // ── handleCritique ────────────────────────────────────────────────────────────
   //
   // Called when the user clicks "Critique design" or "Re-critique design".
@@ -656,21 +713,76 @@ export default function ChatPanel({
           </div>
         </div>
 
-        {/* Right side: new session button */}
-        <button
-          onClick={handleNewSession}
-          style={{
-            fontSize: '12px',
-            padding: '6px 12px',
-            borderRadius: '6px',
-            border: '1px solid #E5E7EB',
-            backgroundColor: 'transparent',
-            color: '#6B7280',
-            cursor: 'pointer',
-          }}
-        >
-          New session
-        </button>
+        {/* Right side: guidelines status + upload + new session */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+
+          {/* Guidelines status indicator */}
+          {guidelines && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              fontSize: '11px',
+              color: '#065F46',
+              backgroundColor: '#ECFDF5',
+              border: '1px solid #D1FAE5',
+              borderRadius: '6px',
+              padding: '4px 10px',
+            }}>
+              {/* Green dot indicating guidelines are active */}
+              <div style={{
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
+                backgroundColor: '#34D399',
+                flexShrink: 0,
+              }} />
+              {guidelines.source} ({guidelines.chunkCount} chunks)
+            </div>
+          )}
+
+          {/* Upload guidelines button — hidden file input triggered by label */}
+          {/* We use a label + hidden input pattern because file inputs
+              cannot be styled easily. The label acts as the visible button
+              and triggers the hidden input when clicked. */}
+          <label
+            style={{
+              fontSize: '12px',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              border: '1px solid #E5E7EB',
+              backgroundColor: isUploading ? '#F9FAFB' : 'transparent',
+              color: isUploading ? '#9CA3AF' : '#6B7280',
+              cursor: isUploading ? 'not-allowed' : 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {isUploading ? 'Processing…' : guidelines ? '↑ Replace guidelines' : '↑ Upload guidelines'}
+            <input
+              type="file"
+              accept=".pdf"
+              onChange={handleUpload}
+              disabled={isUploading}
+              style={{ display: 'none' }}
+            />
+          </label>
+
+          <button
+            onClick={handleNewSession}
+            style={{
+              fontSize: '12px',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              border: '1px solid #E5E7EB',
+              backgroundColor: 'transparent',
+              color: '#6B7280',
+              cursor: 'pointer',
+            }}
+          >
+            New session
+          </button>
+
+        </div>
       </div>
 
 

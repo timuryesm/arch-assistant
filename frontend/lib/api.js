@@ -274,3 +274,74 @@ export async function getCritique(sessionId, history = []) {
   const data = await res.json();
   return data.critique;
 }
+
+// ─── uploadGuidelines ─────────────────────────────────────────────────────────
+//
+// Uploads a PDF file to the backend for RAG processing.
+//
+// This function is different from all the others in this file because
+// it sends a file (binary data) rather than JSON. Files are sent as
+// multipart/form-data — a special encoding for binary content.
+//
+// HOW FORMDATA WORKS:
+// FormData is a browser API that builds a multipart/form-data request body.
+// You append fields to it like a dictionary, then pass it directly to fetch().
+// The browser automatically sets the correct Content-Type header including
+// the boundary string that separates the fields.
+//
+// IMPORTANT: Do NOT set Content-Type manually when using FormData.
+// fetch() sets it automatically with the correct boundary value.
+// If you set it manually, the boundary will be missing and the server
+// cannot parse the request.
+//
+// Parameters:
+//   file — a browser File object (from an <input type="file"> element)
+//
+// Returns:
+//   { source: string, chunkCount: number }
+
+export async function uploadGuidelines(file) {
+  // Build the multipart form data
+  const formData = new FormData();
+
+  // 'pdf' is the field name multer expects on the backend
+  // (matches upload.single('pdf') in index.js)
+  formData.append('pdf', file);
+
+  const res = await fetch(`${BACKEND_URL}/api/upload`, {
+    method: 'POST',
+    // DO NOT set Content-Type here — fetch sets it automatically
+    // with the correct multipart boundary when body is FormData
+    body: formData,
+  });
+
+  if (!res.ok) {
+    let errorMessage = `Upload failed (status ${res.status})`;
+    try {
+      const errData = await res.json();
+      if (errData.error) {
+        errorMessage = errData.error;
+      }
+    } catch {
+      // Response was not JSON — use the generic message
+    }
+    throw new Error(errorMessage);
+  }
+
+  return res.json();
+  // Returns: { source: "guidelines.pdf", chunkCount: 24 }
+}
+
+// ─── getGuidelinesInfo ────────────────────────────────────────────────────────
+//
+// Returns info about the currently loaded guidelines from the backend.
+// Called on page load to show whether guidelines are already loaded.
+//
+// Returns:
+//   { loaded: boolean, chunkCount: number, source: string | null }
+
+export async function getGuidelinesInfo() {
+  const res = await fetch(`${BACKEND_URL}/api/guidelines`);
+  if (!res.ok) return { loaded: false, chunkCount: 0, source: null };
+  return res.json();
+}
