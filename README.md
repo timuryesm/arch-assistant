@@ -106,6 +106,8 @@ arch-assistant/
 │   ├── critiquePrompt.js   Adversarial reviewer — finds P0/P1/P2 weaknesses
 │   ├── session.js          Session ID generation (stateless — no history storage)
 │   ├── llm.js              LangChain chains and model setup for all four AI features
+│   ├── ragService.js       PDF processing, chunking, and context retrieval
+│   ├── vectorStore.js      In-memory Voyage embeddings with cosine similarity search
 │   └── package.json
 ├── frontend/
 │   ├── app/
@@ -151,7 +153,10 @@ Create a `.env` file:
 
 ```bash
 echo "ANTHROPIC_API_KEY=your_key_here" > .env
+echo "VOYAGE_API_KEY=your_key_here" > .env
 ```
+Get your Anthropic key at https://console.anthropic.com
+Get your Voyage key at https://dash.voyageai.com
 
 Start the backend:
 
@@ -236,7 +241,7 @@ Mermaid.js predates React. The `DiagramPanel` component uses `useEffect` to call
 - [x] Phase 3 — Markdown export + session persistence + conversation history
 - [x] Phase 4 Part 1 — Adversarial design critique with P0/P1/P2 severity ratings
 - [x] Phase 4 Part 2 — LangChain refactor (chains, prompt templates, model abstraction)
-- [ ] Phase 5 — Internal design guideline search (RAG)
+- [x] Phase 5 — RAG: PDF guidelines upload, Voyage embeddings, semantic context injection
 
 ---
 
