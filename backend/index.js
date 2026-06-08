@@ -30,6 +30,28 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const multer = require('multer');
+const { processPDF, getRelevantContext, getStoreInfo } = require('./ragService');
+
+// Configure multer for in-memory file storage.
+// memoryStorage() keeps the uploaded file as a Buffer in req.file.buffer
+// rather than writing it to disk. This is cleaner for our use case —
+// we process the PDF immediately and never need the file on disk.
+//
+// limits.fileSize: 10MB maximum — large enough for most guideline docs,
+// small enough to prevent abuse.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    // Only accept PDF files
+    if (file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF files are accepted.'), false);
+    }
+  },
+});
 
 // LangChain chains — replace the raw Anthropic SDK
 const {
@@ -103,6 +125,80 @@ app.post('/api/session/new', (req, res) => {
   res.json({ sessionId });
 });
 
+// ── Route: POST /api/upload ───────────────────────────────────────────────────
+//
+// Accepts a PDF file upload and processes it into the vector store.
+//
+// This route uses multer middleware — upload.single('pdf') means we
+// expect one file uploaded under the field name 'pdf'.
+//
+// The full pipeline triggered by this route:
+//   1. multer parses the multipart request, puts file in req.file
+//   2. ragService.processPDF() extracts text, chunks it, embeds it
+//   3. vectorStore stores the embeddings in memory
+//   4. We return info about what was loaded
+//
+// After this route succeeds, every subsequent /api/chat request will
+// automatically retrieve relevant chunks and inject them as context.
+//
+// Request: multipart/form-data with field 'pdf' containing a PDF file
+// Response: { source: string, chunkCount: number }
+
+app.post('/api/upload', upload.single('pdf'), async (req, res) => {
+  // multer puts the uploaded file at req.file
+  // If no file was sent, req.file is undefined
+  if (!req.file) {
+    return res.status(400).json({
+      error: 'No PDF file received. Make sure the file is sent as field "pdf".',
+    });
+  }
+
+  const filename = req.file.originalname;
+  const buffer = req.file.buffer;
+
+  console.log(`[upload] Received "${filename}" (${(buffer.length / 1024).toFixed(1)} KB)`);
+
+  try {
+    // Process the PDF — extract, chunk, embed, store
+    // This is the slow step (5-30 seconds depending on PDF size)
+    // because it makes one embedding API call per chunk.
+    const result = await processPDF(buffer, filename);
+
+    console.log(`[upload] Successfully processed "${filename}" — ${result.chunkCount} chunks`);
+
+    res.json({
+      source: result.source,
+      chunkCount: result.chunkCount,
+    });
+
+  } catch (error) {
+    console.error('[upload] Error:', error.message);
+
+    // Handle multer file size error specifically
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        error: 'File too large. Maximum size is 10MB.',
+      });
+    }
+
+    res.status(500).json({
+      error: error.message || 'Failed to process PDF. Check the server logs.',
+    });
+  }
+});
+
+
+// ── Route: GET /api/guidelines ────────────────────────────────────────────────
+//
+// Returns info about the currently loaded guidelines.
+// The frontend calls this on page load to show whether guidelines
+// are already loaded (from a previous upload this session).
+//
+// Response: { loaded: boolean, chunkCount: number, source: string | null }
+
+app.get('/api/guidelines', (req, res) => {
+  res.json(getStoreInfo());
+});
 
 // ── Route: POST /api/chat ─────────────────────────────────────────────────────
 //
@@ -153,10 +249,48 @@ app.post('/api/chat', async (req, res) => {
     // Convert history from { role, content } objects to LangChain message types
     const langChainHistory = convertHistoryToLangChain(conversationHistory);
 
-    // One line replaces ~15 lines of raw SDK boilerplate
+    // ── RAG context injection ──────────────────────────────────────────────
+    //
+    // If design guidelines have been uploaded, retrieve the most relevant
+    // chunks for this message and prepend them to the input.
+    //
+    // We append the context to the user's message rather than injecting
+    // it into the system prompt for two reasons:
+    //
+    // 1. The system prompt is static in our LangChain chain setup —
+    //    it is defined once in llm.js and does not change per request.
+    //
+    // 2. Appending to the user message keeps the context close to the
+    //    query — Claude pays more attention to recent context than
+    //    distant context in long prompts.
+    //
+    // The final message Claude sees:
+    //   "[user's actual message]
+    //
+    //    Relevant design guidelines for this discussion:
+    //    [From: guidelines.pdf]
+    //    We use PostgreSQL for all relational data...
+    //
+    //    Use these guidelines to inform your recommendations."
+
+    let messageWithContext = message.trim();
+
+    try {
+      const ragContext = await getRelevantContext(message.trim());
+      if (ragContext) {
+        messageWithContext = `${message.trim()}\n\n${ragContext}`;
+        console.log(`[chat] Injected RAG context (${ragContext.length} chars)`);
+      }
+    } catch (ragError) {
+      // RAG retrieval failing should not break the chat.
+      // Log the error and continue without context.
+      console.warn('[chat] RAG retrieval failed, continuing without context:', ragError.message);
+    }
+
+    // Call the chat chain with the context-enriched message
     const rawText = await chatChain.invoke({
       history: langChainHistory,
-      input: message.trim(),
+      input: messageWithContext,
     });
 
     const { cleanText, tag, summary } = parseTagFromResponse(rawText);
