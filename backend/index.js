@@ -47,6 +47,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { SYSTEM_PROMPT } = require('./systemPrompt');
 const { DIAGRAM_PROMPT } = require('./diagramPrompt');
 const { EXPORT_PROMPT } = require('./exportPrompt');
+const { CRITIQUE_PROMPT } = require('./critiquePrompt');
 const { createSession } = require('./session');
 
 
@@ -498,6 +499,120 @@ app.post('/api/export', async (req, res) => {
 
     res.status(500).json({
       error: 'Export generation failed. Check the server logs.',
+    });
+  }
+});
+
+// ─── Route: POST /api/critique ───────────────────────────────────────────────
+//
+// Generates an adversarial design critique from the conversation history.
+//
+// This is the fourth distinct Claude API call in the app. It uses
+// CRITIQUE_PROMPT which instructs Claude to adopt the mindset of a staff
+// engineer in a design review — assuming the design will fail and finding
+// out why before it does in production.
+//
+// HOW IT DIFFERS FROM THE OTHER ROUTES:
+//
+//   /api/chat      → conversational, builds understanding incrementally
+//   /api/diagram   → mechanical, outputs only Mermaid syntax
+//   /api/export    → comprehensive, documents everything discussed
+//   /api/critique  → adversarial, finds everything wrong with the design
+//
+// OUTPUT FORMAT:
+// The critique is returned as a markdown string with a specific structure:
+//   ## Design critique
+//   ### Summary        — overall assessment
+//   ### Findings       — P0/P1/P2 prioritised list of weaknesses
+//   ### What was not reviewed — gaps in the assessment
+//
+// The frontend renders this markdown in a dedicated CritiquePanel component.
+//
+// MAX TOKENS:
+// We use 2048 — same as export — because a thorough critique with 5-7
+// findings, each with impact and mitigation sections, needs room to breathe.
+// Cutting it off at 1024 risks truncating the most important findings.
+//
+// Request body: { sessionId: string, history: array }
+// Response:     { critique: string }  ← raw markdown
+
+app.post('/api/critique', async (req, res) => {
+  const { sessionId, history } = req.body;
+
+  if (!sessionId) {
+    return res.status(400).json({ error: 'sessionId is required.' });
+  }
+
+  // Accept history from the frontend — same pattern as diagram and export
+  const conversationHistory = Array.isArray(history) ? history : [];
+
+  if (conversationHistory.length === 0) {
+    return res.status(400).json({
+      error: 'No conversation history found. Design something first, then critique it.',
+    });
+  }
+
+  console.log(`[critique] Generating for session ${sessionId.slice(0, 8)}…`);
+
+  try {
+    // Build the messages array for this API call.
+    // Same pattern as diagram and export: spread the full history,
+    // append a final instruction telling Claude what to produce.
+    // We do NOT store this in session history — it is a one-off command.
+    const messagesForCritique = [
+      ...conversationHistory,
+      {
+        role: 'user',
+        content:
+          'Conduct the adversarial design review now. Be specific to the actual components, numbers, and technology choices we discussed. Do not give generic advice.',
+      },
+    ];
+
+    const response = await anthropic.messages.create({
+      model: 'claude-opus-4-6',
+
+      // 2048 tokens gives Claude room to write thorough findings
+      // with specific impact and mitigation sections for each.
+      max_tokens: 2048,
+
+      // CRITIQUE_PROMPT shifts Claude from collaborative architect
+      // to adversarial reviewer — the same design, opposite perspective.
+      system: CRITIQUE_PROMPT,
+
+      messages: messagesForCritique,
+    });
+
+    // Extract the raw text from Claude's response
+    const critique = response.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('')
+      .trim();
+
+    // Basic validation — the critique should start with a markdown heading.
+    // If Claude ignored the prompt format, we return a clear error rather
+    // than sending malformed markdown to the frontend.
+    if (!critique.startsWith('#')) {
+      console.error('[critique] Unexpected output:', critique.slice(0, 100));
+      return res.status(500).json({
+        error: 'Critique generation failed — unexpected output format. Try again.',
+      });
+    }
+
+    console.log(`[critique] Generated successfully (${critique.length} chars)`);
+    res.json({ critique });
+
+  } catch (error) {
+    console.error('[critique] Error:', error.message);
+
+    if (error.status === 429) {
+      return res.status(429).json({
+        error: 'Rate limited. Wait a moment and try again.',
+      });
+    }
+
+    res.status(500).json({
+      error: 'Critique generation failed. Check the server logs.',
     });
   }
 });
