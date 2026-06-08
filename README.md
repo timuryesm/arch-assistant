@@ -40,9 +40,11 @@ Sessions survive page refreshes, tab closes, and server restarts. History is sto
 | Layer | Technology | Why |
 |---|---|---|
 | Frontend | Next.js 14 (App Router) | Production-grade React with file-based routing |
-| Backend | Node.js + Express | Lightweight API server, easy to extend |
-| AI | Anthropic Claude API | Best-in-class reasoning for design problems |
+| Backend | Node.js + Express | Lightweight API server, stateless by design |
+| AI | Anthropic Claude API | Three specialised prompts for reasoning, diagrams, and export |
 | Diagrams | Mermaid.js | Text-to-diagram, works natively in Notion/GitHub |
+| Persistence | Browser localStorage | Sessions survive restarts with no backend database needed |
+| Markdown | react-markdown | Renders Claude's formatted responses in the chat UI |
 | Styling | Inline styles | No build step, easy to read and modify |
 
 ---
@@ -68,6 +70,7 @@ The app is split into two independent services:
 │   POST /api/diagram     → diagram generation            │
 │   POST /api/export      → markdown export               │
 │   POST /api/session/new → session creation              │
+│   GET  /health          → server health check           │
 └────────────┬────────────────────────────────────────────┘
              │
 ┌────────────▼────────────────────────────────────────────┐
@@ -80,6 +83,8 @@ The app is split into two independent services:
 ```
 
 **Three Claude API calls. Three system prompts. Three completely different behaviours from the same model.**
+
+Session history travels from the browser to the backend on every request — the backend is fully stateless for conversations. History is persisted in the browser's localStorage, so sessions survive page refreshes and server restarts.
 
 The key insight: specialisation. A model told to reason, diagram, AND document simultaneously does all three poorly. Separate prompts with separate jobs produce far better output.
 
@@ -94,19 +99,21 @@ arch-assistant/
 │   ├── systemPrompt.js     Architect persona — asks questions, names tradeoffs
 │   ├── diagramPrompt.js    Diagram converter — outputs only Mermaid syntax
 │   ├── exportPrompt.js     Technical writer — produces markdown design docs
-│   ├── session.js          In-memory conversation history manager
+│   ├── session.js          Session ID generation (stateless — no history storage)
 │   └── package.json
 ├── frontend/
 │   ├── app/
 │   │   ├── layout.jsx      Root HTML shell, global font, page title
-│   │   └── page.jsx        Split-panel layout orchestrator
+│   │   └── page.jsx        Three-panel layout orchestrator
 │   ├── components/
 │   │   ├── ChatPanel.jsx   Main chat UI, state management, send logic
 │   │   ├── DiagramPanel.jsx Mermaid rendering, diagram display
+│   │   ├── HistorySidebar.jsx Session history list, select and delete sessions
 │   │   ├── Message.jsx     Individual message bubble with markdown
 │   │   └── TagBadge.jsx    Coloured semantic tag pill
 │   ├── lib/
-│   │   └── api.js          All fetch calls to the backend
+│   │   ├── api.js          All fetch calls to the backend
+│   │   └── storage.js      localStorage helpers for session persistence
 │   └── package.json
 └── README.md
 ```
