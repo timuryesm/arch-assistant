@@ -144,13 +144,13 @@ function convertHistoryToLangChain(history) {
 // Which is exactly what we built manually before — just cleaner.
 
 const chatPrompt = ChatPromptTemplate.fromMessages([
-  ['system', SYSTEM_PROMPT],
+  ['system', SYSTEM_PROMPT.replace(/\{/g, '{{').replace(/\}/g, '}}')],
   new MessagesPlaceholder('history'),
   ['human', '{input}'],
 ]);
 
 // The chain: fill prompt → send to Claude → extract string
-const chatChain = chatPrompt | model | outputParser;
+const chatChain = chatPrompt.pipe(model).pipe(outputParser);
 
 
 // ── Diagram chain ─────────────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ const chatChain = chatPrompt | model | outputParser;
 // instruction to generate the diagram. Only the history varies.
 
 const diagramPromptTemplate = ChatPromptTemplate.fromMessages([
-  ['system', DIAGRAM_PROMPT],
+  ['system', DIAGRAM_PROMPT.replace(/\{/g, '{{').replace(/\}/g, '}}')],
   new MessagesPlaceholder('history'),
   ['human', 'Based on everything we have discussed, generate the Mermaid diagram now. Output only the diagram syntax — nothing else.'],
 ]);
@@ -177,7 +177,7 @@ const diagramModel = new ChatAnthropic({
   maxTokens: 1024,
 });
 
-const diagramChain = diagramPromptTemplate | diagramModel | outputParser;
+const diagramChain = diagramPromptTemplate.pipe(diagramModel).pipe(outputParser);
 
 
 // ── Export chain ──────────────────────────────────────────────────────────────
@@ -190,7 +190,7 @@ const diagramChain = diagramPromptTemplate | diagramModel | outputParser;
 // room for detailed prose in each one.
 
 const exportPromptTemplate = ChatPromptTemplate.fromMessages([
-  ['system', EXPORT_PROMPT],
+  ['system', EXPORT_PROMPT.replace(/\{/g, '{{').replace(/\}/g, '}}')],
   new MessagesPlaceholder('history'),
   ['human', 'Based on everything we have discussed, generate the architecture design document now. Follow the format in your instructions exactly.'],
 ]);
@@ -200,7 +200,7 @@ const exportModel = new ChatAnthropic({
   maxTokens: 2048,
 });
 
-const exportChain = exportPromptTemplate | exportModel | outputParser;
+const exportChain = exportPromptTemplate.pipe(exportModel).pipe(outputParser);
 
 
 // ── Critique chain ────────────────────────────────────────────────────────────
@@ -213,7 +213,7 @@ const exportChain = exportPromptTemplate | exportModel | outputParser;
 // sections need more space than the default 1024.
 
 const critiquePromptTemplate = ChatPromptTemplate.fromMessages([
-  ['system', CRITIQUE_PROMPT],
+  ['system', CRITIQUE_PROMPT.replace(/\{/g, '{{').replace(/\}/g, '}}')],
   new MessagesPlaceholder('history'),
   ['human', 'Conduct the adversarial design review now. Be specific to the actual components, numbers, and technology choices we discussed. Do not give generic advice.'],
 ]);
@@ -223,7 +223,7 @@ const critiqueModel = new ChatAnthropic({
   maxTokens: 2048,
 });
 
-const critiqueChain = critiquePromptTemplate | critiqueModel | outputParser;
+const critiqueChain = critiquePromptTemplate.pipe(critiqueModel).pipe(outputParser);
 
 
 // ── Exports ───────────────────────────────────────────────────────────────────
