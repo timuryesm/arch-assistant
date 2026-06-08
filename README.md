@@ -4,7 +4,7 @@ A specialized AI tool for system design thinking. You give it a problem — it h
 
 This is not a general-purpose chatbot. It lives in the messy, ambiguous space where real design work happens: before the code is written, when decisions are still open and tradeoffs still need to be named.
 
-![Architecture Design Assistant](https://img.shields.io/badge/status-active-brightgreen) ![Node.js](https://img.shields.io/badge/backend-Node.js-339933) ![Next.js](https://img.shields.io/badge/frontend-Next.js-000000) ![Claude](https://img.shields.io/badge/AI-Claude%20API-7C3AED)
+![Architecture Design Assistant](https://img.shields.io/badge/status-active-brightgreen) ![Node.js](https://img.shields.io/badge/backend-Node.js-339933) ![Next.js](https://img.shields.io/badge/frontend-Next.js-000000) ![Claude](https://img.shields.io/badge/AI-Claude%20API-7C3AED) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
