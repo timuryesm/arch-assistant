@@ -292,6 +292,7 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
       setMessages([]);
       setInput('');
       setError(null);
+      onDiagramGenerated(null); // clear the diagram when starting a new session
       setSessionNum(n => n + 1); // increment the session counter
     } catch (err) {
       setError('Could not create a new session. Is the backend running?');
