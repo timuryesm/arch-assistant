@@ -192,3 +192,100 @@ export async function generateDiagram(sessionId) {
     const data = await res.json();
     return data.diagram;
   }
+
+// ─── exportDesignDoc ──────────────────────────────────────────────────────────
+//
+// Asks the backend to generate a markdown design document from the session,
+// then triggers a file download in the browser.
+//
+// This function does two distinct things:
+//   1. Fetches the markdown string from the backend (network call)
+//   2. Triggers a .md file download in the browser (DOM manipulation)
+//
+// WHY DOES THE DOWNLOAD HAPPEN HERE AND NOT IN THE COMPONENT?
+// We could return the markdown string to ChatPanel and let the component
+// handle the download. But the download logic is tightly coupled to this
+// API call — it always happens immediately after a successful fetch.
+// Keeping both steps together makes ChatPanel simpler: it just calls
+// exportDesignDoc() and nothing else needs to happen on its end.
+//
+// HOW BROWSER FILE DOWNLOADS WORK:
+// There is no download() function in JavaScript. The browser only triggers
+// a file save when the user clicks a link with a `download` attribute.
+// We fake this by:
+//   1. Creating a Blob — a chunk of in-memory binary data
+//   2. Generating a temporary URL pointing to that Blob
+//   3. Creating an invisible <a> element with that URL and a download attribute
+//   4. Programmatically clicking it — the browser intercepts and saves the file
+//   5. Immediately revoking the URL to free the memory
+//
+// This pattern is the standard way to trigger file downloads from JavaScript.
+// You will see it in virtually every web app that exports files.
+//
+// Parameters:
+//   sessionId  — the current session ID
+//   filename   — what to name the downloaded file (default: design-document.md)
+//
+// Returns: nothing — the side effect IS the download
+
+export async function exportDesignDoc(sessionId, filename = 'design-document.md') {
+  const res = await fetch(`${BACKEND_URL}/api/export`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ sessionId }),
+  });
+
+  if (!res.ok) {
+    let errorMessage = `Export failed (status ${res.status})`;
+
+    try {
+      const errData = await res.json();
+      if (errData.error) {
+        errorMessage = errData.error;
+      }
+    } catch {
+      // Response was not JSON — use the generic message
+    }
+
+    throw new Error(errorMessage);
+  }
+
+  // Extract the markdown string from the response
+  const data = await res.json();
+  const markdown = data.markdown;
+
+  // ── Trigger the file download ─────────────────────────────────────────────
+
+  // Step 1: Create a Blob from the markdown string.
+  // A Blob is a file-like object of raw data that exists in memory.
+  // The type 'text/markdown' tells the OS what kind of file this is —
+  // some systems use this to open it with the right application.
+  const blob = new Blob([markdown], { type: 'text/markdown' });
+
+  // Step 2: Generate a temporary URL pointing to the Blob.
+  // URL.createObjectURL() creates a URL like:
+  //   blob:http://localhost:3000/550e8400-e29b-41d4-a716-446655440000
+  // This URL only exists in this browser tab — it is not a real web URL.
+  const url = URL.createObjectURL(blob);
+
+  // Step 3: Create an invisible <a> element and set it up for download.
+  // The `download` attribute tells the browser to save the file instead
+  // of navigating to it. The value becomes the suggested filename.
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+
+  // Step 4: The <a> element must be in the DOM to be clickable in some browsers.
+  // We append it, click it, then immediately remove it — the user never sees it.
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  // Step 5: Revoke the object URL to free the memory.
+  // If we skip this, the Blob stays in memory until the page is closed.
+  // For a small markdown file this is negligible, but it is good practice.
+  // We use setTimeout to ensure the click has fully processed before cleanup.
+  setTimeout(() => URL.revokeObjectURL(url), 100);
+}
