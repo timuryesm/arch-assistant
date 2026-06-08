@@ -197,21 +197,26 @@ app.get('/api/session/:id', (req, res) => {
 //
 // The main route. Everything important happens here.
 //
-// Request body: { sessionId: string, message: string }
-// Response:     { text: string, tag: string, summary: string }
+// WHAT CHANGED IN PHASE 3 PART 2:
+// Previously the backend looked up conversation history from its own
+// in-memory sessions Map. Now the frontend sends the full history with
+// every request. The backend uses what it receives and returns the response.
 //
-// We mark this function async because it calls the Anthropic API,
-// which takes time. The async/await pattern lets us write asynchronous
-// code that reads like synchronous code — we "await" each step and
-// the function pauses until that step completes, rather than using
-// nested callbacks.
+// WHY THIS CHANGE?
+// Moving history ownership to the frontend means:
+//   - Sessions survive server restarts (history lives in localStorage)
+//   - The backend becomes stateless — easier to scale and reason about
+//   - No server memory limit on conversation length
+//
+// The backend still creates sessions (for IDs) but no longer stores messages.
+//
+// Request body: { sessionId: string, message: string, history: array }
+// Response:     { text: string, tag: string, summary: string }
 
 app.post('/api/chat', async (req, res) => {
-  const { sessionId, message } = req.body;
+  const { sessionId, message, history } = req.body;
 
   // ── Input validation ──────────────────────────────────────────────────────
-  // Always validate inputs before doing anything with them.
-  // Never trust that the frontend sent what you expected.
 
   if (!sessionId || !message) {
     return res.status(400).json({
@@ -225,82 +230,54 @@ app.post('/api/chat', async (req, res) => {
     });
   }
 
-  // Log the incoming message (first 60 chars) for debugging
-  console.log(`[chat] Session ${sessionId.slice(0, 8)}…: "${message.slice(0, 60)}"`);
+  // history must be an array — if not provided, default to empty array.
+  // An empty history just means this is the first message in the session.
+  const conversationHistory = Array.isArray(history) ? history : [];
 
-  // ── Core logic ────────────────────────────────────────────────────────────
-  // We wrap everything in try/catch so that if any step fails
-  // (network error, API error, etc.) we return a clean error response
-  // instead of crashing the server.
+  console.log(`[chat] Session ${sessionId.slice(0, 8)}… (${conversationHistory.length} previous messages)`);
 
   try {
-    // Step 1: Record the user's message in session history
-    appendMessage(sessionId, 'user', message.trim());
+    // Build the full messages array for this API call.
+    // We take the history the frontend sent and append the new user message.
+    // This is the complete conversation Claude will see.
+    //
+    // NOTE: We no longer call appendMessage() or getHistory() here.
+    // The frontend owns the history now — we just use what we receive.
+    const messages = [
+      ...conversationHistory,
+      { role: 'user', content: message.trim() },
+    ];
 
-    // Step 2: Get the full conversation history for this session
-    // This is everything said so far — all user messages and all
-    // Claude responses — in the exact format the API expects.
-    const history = getHistory(sessionId);
-
-    // Step 3: Call the Anthropic API
-    //
-    // The key parameters:
-    //
-    //   model — which Claude version to use.
-    //     claude-opus-4-6 is the most capable model, important for
-    //     nuanced design reasoning. You could use claude-haiku-4-5
-    //     for cheaper/faster responses once you are testing.
-    //
-    //   max_tokens — the maximum length of Claude's response.
-    //     1024 tokens ≈ roughly 750 words. Enough for detailed design
-    //     discussion without runaway costs.
-    //
-    //   system — the system prompt. Sent on every call.
-    //     This is what keeps Claude in "architect mode" throughout
-    //     the conversation.
-    //
-    //   messages — the full conversation history.
-    //     This is what gives Claude its "memory". Without this,
-    //     every message would be a fresh conversation.
+    // Call the Anthropic API with the full conversation
     const response = await anthropic.messages.create({
       model: 'claude-opus-4-6',
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
-      messages: history,
+      messages,
     });
 
-    // Step 4: Extract the text from Claude's response
-    //
-    // The API returns a "content" array that can contain multiple blocks
-    // of different types (text, tool_use, etc.).
-    // For now we only care about text blocks. We filter for them and
-    // join them into a single string.
+    // Extract text from Claude's response
     const rawText = response.content
       .filter(block => block.type === 'text')
       .map(block => block.text)
       .join('');
 
-    // Step 5: Parse the semantic tag out of Claude's response
-    // cleanText  — the response without the ```json block (shown to user)
-    // tag        — e.g. "open_question", "tradeoff", "failure_mode"
-    // summary    — one-sentence summary of this response
+    // Parse the semantic tag out of Claude's response
     const { cleanText, tag, summary } = parseTagFromResponse(rawText);
 
-    // Step 6: Store Claude's response in session history
+    // Return the response to the frontend.
+    // The frontend will:
+    //   1. Display cleanText in the chat UI
+    //   2. Store the full exchange (user message + rawText) in localStorage
+    //   3. Send the updated history on the next request
     //
-    // IMPORTANT: We store rawText (with the JSON block), NOT cleanText.
-    // Claude needs to see its own previous responses exactly as written.
-    // If we stored the stripped version, it would lose context.
-    appendMessage(sessionId, 'assistant', rawText);
-
-    // Step 7: Send the response to the frontend
+    // We return rawText (not cleanText) so the frontend can store the
+    // full response including the JSON tag block — Claude needs to see
+    // its own previous responses exactly as written for accurate context.
     console.log(`[chat] Responded — tag: "${tag}"`);
-    res.json({ text: cleanText, tag, summary });
+    res.json({ text: cleanText, tag, summary, rawAssistantMessage: rawText });
 
   } catch (error) {
-    // ── Error handling ────────────────────────────────────────────────────
-    // Different errors need different responses.
-
     console.error('[chat] Error:', error.message);
 
     if (error.status === 401) {
@@ -315,14 +292,6 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    if (error.message?.includes('Session')) {
-      // Our own session-not-found error from session.js
-      return res.status(404).json({
-        error: 'Session expired. Please refresh the page to start a new session.',
-      });
-    }
-
-    // Generic fallback for unexpected errors
     res.status(500).json({
       error: 'Something went wrong. Check the server terminal for details.',
     });
@@ -363,9 +332,10 @@ app.post('/api/diagram', async (req, res) => {
       return res.status(400).json({ error: 'sessionId is required.' });
     }
   
-    // Get the full conversation history for this session
-    const history = getHistory(sessionId);
-  
+    // Accept history from the frontend instead of looking it up server-side.
+    // The frontend sends the full conversation history with this request.
+    const history = Array.isArray(req.body.history) ? req.body.history : [];
+
     if (history.length === 0) {
       return res.status(400).json({
         error: 'No conversation history found. Have a design discussion first.',
@@ -478,7 +448,8 @@ app.post('/api/export', async (req, res) => {
     return res.status(400).json({ error: 'sessionId is required.' });
   }
 
-  const history = getHistory(sessionId);
+  // Accept history from the frontend instead of looking it up server-side.
+  const history = Array.isArray(req.body.history) ? req.body.history : [];
 
   if (history.length === 0) {
     return res.status(400).json({
