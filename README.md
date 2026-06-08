@@ -33,6 +33,9 @@ Every design session is saved locally in the browser. A left sidebar lists all p
 **Session persistence**
 Sessions survive page refreshes, tab closes, and server restarts. History is stored in the browser's localStorage — no account or login required.
 
+**Adversarial design critique**
+Click "Critique design" at any point in a session to get a structured adversarial review of the current architecture. Findings are prioritised by severity — P0 (critical), P1 (serious), P2 (technical debt) — each with a specific impact description and concrete mitigation. Results are cached so switching between the diagram and critique panels is instant.
+
 ---
 
 ## Tech stack
@@ -99,6 +102,7 @@ arch-assistant/
 │   ├── systemPrompt.js     Architect persona — asks questions, names tradeoffs
 │   ├── diagramPrompt.js    Diagram converter — outputs only Mermaid syntax
 │   ├── exportPrompt.js     Technical writer — produces markdown design docs
+│   ├── critiquePrompt.js   Adversarial reviewer — finds P0/P1/P2 weaknesses
 │   ├── session.js          Session ID generation (stateless — no history storage)
 │   └── package.json
 ├── frontend/
@@ -106,11 +110,12 @@ arch-assistant/
 │   │   ├── layout.jsx      Root HTML shell, global font, page title
 │   │   └── page.jsx        Three-panel layout orchestrator
 │   ├── components/
-│   │   ├── ChatPanel.jsx   Main chat UI, state management, send logic
+│   │   ├── ChatPanel.jsx    Main chat UI, state management, send logic
+│   │   ├── CritiquePanel.jsx Adversarial review with P0/P1/P2 severity badges
 │   │   ├── DiagramPanel.jsx Mermaid rendering, diagram display
 │   │   ├── HistorySidebar.jsx Session history list, select and delete sessions
-│   │   ├── Message.jsx     Individual message bubble with markdown
-│   │   └── TagBadge.jsx    Coloured semantic tag pill
+│   │   ├── Message.jsx      Individual message bubble with markdown
+│   │   └── TagBadge.jsx     Coloured semantic tag pill
 │   ├── lib/
 │   │   ├── api.js          All fetch calls to the backend
 │   │   └── storage.js      localStorage helpers for session persistence
@@ -227,7 +232,8 @@ Mermaid.js predates React. The `DiagramPanel` component uses `useEffect` to call
 - [x] Phase 1 — Focused chat with semantic tagging
 - [x] Phase 2 — Mermaid diagram generation + split panel layout
 - [x] Phase 3 — Markdown export + session persistence + conversation history
-- [ ] Phase 4 — LangChain multi-turn decision sessions
+- [x] Phase 4 Part 1 — Adversarial design critique with P0/P1/P2 severity ratings
+- [ ] Phase 4 Part 2 — LangChain refactor
 - [ ] Phase 5 — Internal design guideline search (RAG)
 
 ---
