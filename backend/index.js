@@ -47,12 +47,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { SYSTEM_PROMPT } = require('./systemPrompt');
 const { DIAGRAM_PROMPT } = require('./diagramPrompt');
 const { EXPORT_PROMPT } = require('./exportPrompt');
-const {
-  createSession,
-  appendMessage,
-  getHistory,
-  getSessionMeta,
-} = require('./session');
+const { createSession } = require('./session');
 
 
 // ─── App setup ────────────────────────────────────────────────────────────────
@@ -172,24 +167,6 @@ app.post('/api/session/new', (req, res) => {
   const sessionId = createSession();
   console.log(`[session] Created: ${sessionId}`);
   res.json({ sessionId });
-});
-
-
-// ─── Route: GET /api/session/:id ─────────────────────────────────────────────
-//
-// Returns lightweight metadata about a session.
-// The frontend uses this to show "Session #1 · 3 exchanges" in the header.
-//
-// :id is a URL parameter — if you call GET /api/session/abc123,
-// then req.params.id will equal "abc123"
-
-app.get('/api/session/:id', (req, res) => {
-  const meta = getSessionMeta(req.params.id);
-  if (!meta) {
-    // 404 means "not found"
-    return res.status(404).json({ error: 'Session not found' });
-  }
-  res.json(meta);
 });
 
 
