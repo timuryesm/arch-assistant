@@ -31,7 +31,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { createSession, sendMessage, generateDiagram } from '../lib/api';
+import { createSession, sendMessage, generateDiagram, exportDesignDoc } from '../lib/api';
 import Message from './Message';
 
 // Suggested prompts shown when the conversation is empty.
@@ -98,6 +98,10 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
   // True while waiting for the diagram API call to complete.
   // Used to show a loading state on the "Generate diagram" button.
   const [isDiagramLoading, setIsDiagramLoading] = useState(false);
+
+  // True while waiting for the export API call to complete.
+  // Used to show a loading state on the "Export design doc" button.
+  const [isExportLoading, setIsExportLoading] = useState(false);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   //
@@ -240,6 +244,58 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+  }
+
+
+  // ── handleExport ──────────────────────────────────────────────────────────────
+  //
+  // Called when the user clicks "Export design doc".
+  // Calls exportDesignDoc() from api.js which:
+  //   1. Makes a POST /api/export request to the backend
+  //   2. Backend calls Claude with the export prompt
+  //   3. Claude returns a structured markdown document
+  //   4. api.js triggers a .md file download in the browser
+  //
+  // This function only needs to manage loading state and error handling —
+  // the actual export logic lives entirely in api.js.
+  //
+  // FILENAME GENERATION:
+  // We try to generate a meaningful filename from the first user message.
+  // "Design a notification service for 5k events/sec" becomes
+  // "notification-service-design.md" — more useful than "design-document.md"
+  // when the file sits in the user's Downloads folder alongside other exports.
+
+  async function handleExport() {
+    if (isExportLoading || !sessionId || messages.length === 0) return;
+
+    setIsExportLoading(true);
+    setError(null);
+
+    try {
+      // Generate a filename from the first user message.
+      // Take the first user message, lowercase it, remove punctuation,
+      // replace spaces with hyphens, trim to 40 chars, append -design.md
+      // Example: "Design a URL shortener for 100M requests"
+      //       → "design-a-url-shortener-for-100m-requests-design.md"
+      const firstUserMessage = messages.find(m => m.role === 'user')?.content || '';
+      const slug = firstUserMessage
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')   // remove punctuation
+        .trim()
+        .replace(/\s+/g, '-')          // spaces to hyphens
+        .slice(0, 40);                 // cap length
+      const filename = slug ? `${slug}-design.md` : 'design-document.md';
+
+      await exportDesignDoc(sessionId, filename);
+
+      // No state update needed on success — the download is the result.
+      // The user sees the browser's native save/download behaviour.
+
+    } catch (err) {
+      setError(err.message || 'Export failed. Try again.');
+    } finally {
+      setIsExportLoading(false);
     }
   }
 
@@ -616,7 +672,7 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
           </button>
         </div>
 
-        {/* Bottom row: hint text on the left, generate diagram button on the right */}
+        {/* Bottom row: hint text on the left, action buttons on the right */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -630,29 +686,57 @@ export default function ChatPanel({ onDiagramGenerated, hasDiagram }) {
             This assistant asks questions before proposing solutions.
           </div>
 
-          {/* Generate diagram button — only shown once the conversation has started */}
+          {/* Action buttons — only shown once the conversation has started */}
           {messages.length > 0 && (
-            <button
-              onClick={handleGenerateDiagram}
-              disabled={isDiagramLoading || messages.length === 0}
-              style={{
-                fontSize: '12px',
-                padding: '6px 12px',
-                borderRadius: '6px',
-                border: '1px solid #DDD6FE',
-                backgroundColor: isDiagramLoading ? '#F5F3FF' : '#EDE9FE',
-                color: isDiagramLoading ? '#A78BFA' : '#5B21B6',
-                cursor: isDiagramLoading ? 'not-allowed' : 'pointer',
-                fontWeight: 500,
-                flexShrink: 0,
-              }}
-            >
-              {isDiagramLoading
-                ? 'Generating…'
-                : hasDiagram
-                  ? 'Regenerate diagram'
-                  : 'Generate diagram'}
-            </button>
+            <div style={{
+              display: 'flex',
+              gap: '8px',
+              alignItems: 'center',
+            }}>
+
+              {/* Export design doc button */}
+              <button
+                onClick={handleExport}
+                disabled={isExportLoading}
+                style={{
+                  fontSize: '12px',
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid #D1FAE5',
+                  backgroundColor: isExportLoading ? '#F0FDF4' : '#ECFDF5',
+                  color: isExportLoading ? '#6EE7B7' : '#065F46',
+                  cursor: isExportLoading ? 'not-allowed' : 'pointer',
+                  fontWeight: 500,
+                  flexShrink: 0,
+                }}
+              >
+                {isExportLoading ? 'Exporting…' : 'Export design doc'}
+              </button>
+
+              {/* Generate diagram button */}
+              <button
+                onClick={handleGenerateDiagram}
+                disabled={isDiagramLoading}
+                style={{
+                  fontSize: '12px',
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid #DDD6FE',
+                  backgroundColor: isDiagramLoading ? '#F5F3FF' : '#EDE9FE',
+                  color: isDiagramLoading ? '#A78BFA' : '#5B21B6',
+                  cursor: isDiagramLoading ? 'not-allowed' : 'pointer',
+                  fontWeight: 500,
+                  flexShrink: 0,
+                }}
+              >
+                {isDiagramLoading
+                  ? 'Generating…'
+                  : hasDiagram
+                    ? 'Regenerate diagram'
+                    : 'Generate diagram'}
+              </button>
+
+            </div>
           )}
         </div>
       </div>
